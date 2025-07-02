@@ -390,27 +390,27 @@ class Filter:
 
     def _is_custom_model(self, body: dict) -> bool:
         """
-        Custom model olduğunu anlamak için body["model"]'in
-        custom prefix'ine bakıyoruz. Gerekirse burayı
-        kendi custom işaretinize göre değiştirin.
+        Check if it's a custom model by looking at the custom prefix
+        in body["model"]. Modify this as needed based on your
+        custom model naming convention.
         """
         model_id = body.get("model", "")
         return model_id.startswith("custom/") or model_id.startswith("custom:")
 
     def _get_model(self, body: dict, model_obj: Optional[dict] = None) -> Optional[str]:
         """
-        Sadece custom modellerde base_model_id kullan,
-        diğer durumlarda direkt body["model"]'i sanitize et.
+        Use base_model_id only for custom models,
+        otherwise sanitize body["model"] directly.
         """
-        # 1) Eğer incoming model_obj varsa ve custom model ise base_model_id kullan
+        # 1) If there's an incoming model_obj and it's a custom model, use base_model_id
         if model_obj and isinstance(model_obj, dict):
             base = model_obj.get("info", {}).get("base_model_id")
             if base and self._is_custom_model(body):
                 return self._sanitize_model_name(base)
 
-        # 2) Normal model bloğu
+        # 2) Normal model handling
         model_id = body.get("model")
-        # bazı durumlarda open-webui 'model' parametresini model_obj['params']['model'] içinde geçiyor olabilir:
+        # in some cases open-webui might pass the 'model' parameter in model_obj['params']['model']:
         if not model_id and model_obj:
             model_id = model_obj.get("params", {}).get("model")
 
@@ -467,11 +467,11 @@ class Filter:
         model: Optional[dict] = None,
         user: Optional[dict] = None,
     ) -> dict:
-        # --- 1) Süreyi al ---
+        # --- 1) Get the time ---
         end_time = time.time()
         elapsed = end_time - self.start_time
 
-        # --- 2) "Computing number of output tokens..." durumu ---
+        # --- 2) "Computing number of output tokens..." status ---
         # await __event_emitter__(
         #    {
         #        "type": "status",
@@ -482,13 +482,13 @@ class Filter:
         #    }
         # )
 
-        # --- 3) Model kimliğini belirle ve output token sayısını hesapla ---
+        # --- 3) Determine model identity and calculate output token count ---
         model_obj = model or getattr(self, "model_info", None)
         model_id = self._get_model(body, model_obj)
         enc = tiktoken.get_encoding("cl100k_base")
         output_tokens = len(enc.encode(get_last_assistant_message(body["messages"])))
 
-        # --- 4) "Computing total costs..." durumu ---
+        # --- 4) "Computing total costs..." status ---
         # await __event_emitter__(
         #    {
         #        "type": "status",
@@ -499,7 +499,7 @@ class Filter:
         #    }
         # )
 
-        # --- 5) Maliyet hesaplama ---
+        # --- 5) Cost calculation ---
         total_cost = self.cost_calculator.calculate_costs(
             model_id,
             self.input_tokens,
@@ -507,7 +507,7 @@ class Filter:
             self.valves.compensation,
         )
 
-        # --- 6) Kullanıcı maliyet kaydını güncelle ---
+        # --- 6) Update user cost record ---
         if user and "email" in user:
             try:
                 self.user_cost_manager.update_user_cost(
@@ -522,7 +522,7 @@ class Filter:
         else:
             print("**ERROR: User email not found!")
 
-        # --- 7) İstatistik dizisini oluştur ---
+        # --- 7) Build statistics string ---
         total_tokens = self.input_tokens + output_tokens
         tps = total_tokens / max(elapsed, 1e-6)
         stats_parts = []
@@ -532,34 +532,34 @@ class Filter:
             stats_parts.append(f"{tps:.2f} T/s")
         if self.valves.number_of_tokens:
             stats_parts.append(f"{total_tokens} Tokens")
-        # Küçük tutarlar için format
+        # Format for small amounts
         if float(total_cost) < float(Config.DECIMALS):
             stats_parts.append(f"${total_cost:.2f}")
         else:
             stats_parts.append(f"${total_cost:.6f}")
         stats_str = " | ".join(stats_parts)
 
-        # --- 8) Son assistant mesajına gömme (hem assistant_message hem messages için) ---
-        # 8a) assistant_message objesi varsa
+        # --- 8) Embed in the last assistant message (for both assistant_message and messages) ---
+        # 8a) If assistant_message object exists
         if (
             "assistant_message" in body
             and body["assistant_message"].get("role") == "assistant"
         ):
             m = body["assistant_message"]
             m["content"] = (
-                m["content"].rstrip() + f"\n\n---\n**İşlem Ücreti:** {stats_str}"
+                m["content"].rstrip() + f"\n\n---\n**Processing Fee:** {stats_str}"
             )
         else:
-            # 8b) fallback olarak messages listesindeki son assistant
+            # 8b) fallback to the last assistant in messages list
             for m in reversed(body.get("messages", [])):
                 if m.get("role") == "assistant":
                     m["content"] = (
                         m["content"].rstrip()
-                        + f"\n\n---\n**İşlem Ücreti:** {stats_str}"
+                        + f"\n\n---\n**Processing Fee:** {stats_str}"
                     )
                     break
 
-        # --- 9) Son durumu emit et (opsiyonel) ---
+        # --- 9) Emit final status (optional) ---
         # await __event_emitter__(
         #    {
         #        "type": "status",
